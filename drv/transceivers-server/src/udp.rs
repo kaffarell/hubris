@@ -11,11 +11,9 @@
 //! All of the API types in `transceiver_messages` operate on **physical**
 //! ports, i.e. an FPGA paired by a physical port index (or mask).
 use crate::ServerImpl;
-use drv_sidecar_front_io::{
-    transceivers::{
-        LogicalPort, LogicalPortMask, ModuleResult, ModuleResultNoFailure,
-    },
-    Reg,
+use drv_sidecar_front_io::transceivers::{
+    FpgaI2CFailure, LogicalPort, LogicalPortFailures, LogicalPortMask,
+    ModuleResult, ModuleResultNoFailure, ModuleResultSlim, PortI2CStatus,
 };
 use hubpack::SerializedSize;
 use ringbuf::*;
@@ -53,12 +51,15 @@ enum Trace {
     MacAddrs,
     GotError(ProtocolError),
     ResponseSize(ResponseSize),
-    OperationResult(ModuleResult),
+    OperationResult(ModuleResultSlim),
     OperationNoFailResult(ModuleResultNoFailure),
     ClearPowerFault(ModuleId),
     LedState(ModuleId),
     SetLedState(ModuleId, LedState),
     ClearDisableLatch(ModuleId),
+    PageSelectI2CFailures(LogicalPort, FpgaI2CFailure),
+    ReadI2CFailures(LogicalPort, FpgaI2CFailure),
+    WriteI2CFailures(LogicalPort, FpgaI2CFailure),
 }
 
 ringbuf!(Trace, 16, Trace::None);
@@ -367,7 +368,7 @@ impl ServerImpl {
                 }
 
                 let result = self.read(read, mask & !self.disabled, out);
-                ringbuf_entry!(Trace::OperationResult(result));
+                ringbuf_entry!(Trace::OperationResult(result.to_slim()));
                 let success = ModuleId::from(result.success());
                 let read_bytes = result.success().count() * read.len() as usize;
                 let (err_len, failed_modules) = self
@@ -401,7 +402,7 @@ impl ServerImpl {
                 }
                 let mask = LogicalPortMask::from(modules);
                 let result = self.write(write, mask & !self.disabled, data);
-                ringbuf_entry!(Trace::OperationResult(result));
+                ringbuf_entry!(Trace::OperationResult(result.to_slim()));
                 let success = ModuleId::from(result.success());
                 let (num_err_bytes, failed_modules) = self
                     .handle_errors_and_failures_and_disabled(
@@ -932,9 +933,13 @@ impl ServerImpl {
         const BANK_SELECT: u8 = 0x7E;
         const PAGE_SELECT: u8 = 0x7F;
 
-        let mut result =
-            ModuleResult::new(mask, LogicalPortMask(0), LogicalPortMask(0))
-                .unwrap();
+        let mut result = ModuleResult::new(
+            mask,
+            LogicalPortMask(0),
+            LogicalPortMask(0),
+            LogicalPortFailures::default(),
+        )
+        .unwrap();
 
         // We can always write the lower page; upper pages require modifying
         // registers in the transceiver to select it.
@@ -948,9 +953,13 @@ impl ServerImpl {
             result = result.chain(self.wait_and_check_i2c(result.success()));
         } else {
             // If the request is to the lower page it is always successful
-            result =
-                ModuleResult::new(mask, LogicalPortMask(0), LogicalPortMask(0))
-                    .unwrap();
+            result = ModuleResult::new(
+                mask,
+                LogicalPortMask(0),
+                LogicalPortMask(0),
+                LogicalPortFailures::default(),
+            )
+            .unwrap();
         }
 
         if let Some(bank) = page.bank() {
@@ -961,6 +970,10 @@ impl ServerImpl {
                 result.success(),
             ));
             result = result.chain(self.wait_and_check_i2c(result.success()));
+        }
+
+        for port in result.failure().to_indices() {
+            ringbuf_entry!(Trace::PageSelectI2CFailures(port, result.failure_types()[port]))
         }
         result
     }
@@ -995,6 +1008,7 @@ impl ServerImpl {
         let mut error = LogicalPortMask(0);
         let mut idx = 0;
         let buf_len = mem.len() as usize;
+        let mut failure_types = LogicalPortFailures::default();
 
         for port in result.success().to_indices() {
             // The status register is contiguous with the output buffer, so
@@ -1018,15 +1032,14 @@ impl ServerImpl {
                     break;
                 };
 
-                let status = buf[0];
+                let status = PortI2CStatus::new(buf[0]);
 
-                // Use QSFP::PORT0 for constants, since they're all identical
-                if status & Reg::QSFP::PORT0_STATUS::BUSY == 0 {
-                    // Check error mask
-                    if status & Reg::QSFP::PORT0_STATUS::ERROR != 0 {
+                if status.done {
+                    if status.error != FpgaI2CFailure::NoError {
                         // Record which port the error ocurred at so we can
                         // give the host a more meaningful error.
                         failure.set(port);
+                        failure_types.0[port.0 as usize] = status.error;
                     } else {
                         // Add data to payload
                         success.set(port);
@@ -1040,8 +1053,15 @@ impl ServerImpl {
                 userlib::hl::sleep_for(1);
             }
         }
-        let final_result = ModuleResult::new(success, failure, error).unwrap();
-        result.chain(final_result)
+        let final_result =
+            ModuleResult::new(success, failure, error, failure_types).unwrap();
+
+        result = result.chain(final_result);
+
+        for port in result.failure().to_indices() {
+            ringbuf_entry!(Trace::ReadI2CFailures(port, result.failure_types()[port]))
+        }
+        result
     }
 
     // The `LogicalPortMask` indicates which of the requested ports the
@@ -1064,7 +1084,12 @@ impl ServerImpl {
             mem.len(),
             result.success(),
         ));
-        result.chain(self.wait_and_check_i2c(result.success()))
+        result = result.chain(self.wait_and_check_i2c(result.success()));
+
+        for port in result.failure().to_indices() {
+            ringbuf_entry!(Trace::WriteI2CFailures(port, result.failure_types()[port]))
+        }
+        result
     }
 
     fn get_led_state_response(

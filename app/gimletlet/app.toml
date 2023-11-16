@@ -368,6 +368,19 @@ input = {port = "E", pin = 13, af = 5}
 mux = "port_e"
 cs = [{port = "E", pin = 11}]
 
+[config.spi.spi6]
+controller = 6
+
+[config.spi.spi6.mux_options.port_g]
+outputs = [
+    {port = "G", pins = [13, 14], af = 5},
+]
+input = {port = "G", pin = 12, af = 5}
+
+[config.spi.spi6.devices.spi6_header]
+mux = "port_g"
+cs = [{port = "G", pin = 8}]
+
 [config.net]
 vlan = { start = 0x301, count = 2 }
 # UDP ports in sockets below are assigned in oxidecomputer/oana
@@ -412,6 +425,4 @@ rx = { packets = 3, bytes = 1024 }
 pins = [
     # ROT_IRQ (af=0 for GPIO, af=15 when EXTI is implemented)
     { name = "ROT_IRQ", pin = { port = "D", pin = 0, af = 0, direction = "input"}},
-    # SPI6 CS repurposed for debugging
-    { name = "DEBUG", pin = { port = "G", pin = 8, af = 0, direction = "output"}}
 ]

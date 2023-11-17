@@ -305,17 +305,17 @@ extern-regions = ["bank2"]
 notifications = ["flash-irq"]
 interrupts = {"flash_controller.irq" = "flash-irq"}
 
-[tasks.spi6_driver]
-name = "drv-stm32h7-spi-server"
-priority = 2
-max-sizes = {flash = 16384, ram = 4096}
-features = ["spi6", "h753"]
-uses = ["spi6"]
-start = true
-interrupts = {"spi6.irq" = "spi-irq"}
-stacksize = 872
-task-slots = ["sys"]
-notifications = ["spi-irq"]
+# [tasks.spi6_driver]
+# name = "drv-stm32h7-spi-server"
+# priority = 2
+# max-sizes = {flash = 16384, ram = 4096}
+# features = ["spi6", "h753"]
+# uses = ["spi6"]
+# start = true
+# interrupts = {"spi6.irq" = "spi-irq"}
+# stacksize = 872
+# task-slots = ["sys"]
+# notifications = ["spi-irq"]
 
 [config]
 [[config.i2c.controllers]]

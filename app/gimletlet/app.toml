@@ -138,7 +138,7 @@ notifications = [
 
 [tasks.hiffy]
 name = "task-hiffy"
-features = ["h753", "stm32h7", "i2c", "gpio", "qspi", "rng", "hash", "sprot"]
+features = ["h753", "stm32h7", "i2c", "gpio", "qspi", "rng", "hash", "sprot", "spi"]
 priority = 7
 max-sizes = {flash = 32768, ram = 32768}
 stacksize = 2048
@@ -305,6 +305,18 @@ extern-regions = ["bank2"]
 notifications = ["flash-irq"]
 interrupts = {"flash_controller.irq" = "flash-irq"}
 
+[tasks.spi6_driver]
+name = "drv-stm32h7-spi-server"
+priority = 2
+max-sizes = {flash = 16384, ram = 4096}
+features = ["spi6", "h753"]
+uses = ["spi6"]
+start = true
+interrupts = {"spi6.irq" = "spi-irq"}
+stacksize = 872
+task-slots = ["sys"]
+notifications = ["spi-irq"]
+
 [config]
 [[config.i2c.controllers]]
 controller = 2
@@ -367,6 +379,19 @@ input = {port = "E", pin = 13, af = 5}
 [config.spi.spi4.devices.spi4_header]
 mux = "port_e"
 cs = [{port = "E", pin = 11}]
+
+[config.spi.spi6]
+controller = 6
+
+[config.spi.spi6.mux_options.port_g]
+outputs = [
+    {port = "G", pins = [13, 14], af = 5},
+]
+input = {port = "G", pin = 12, af = 5}
+
+[config.spi.spi6.devices.spi6_header]
+mux = "port_g"
+cs = [{port = "G", pin = 8}]
 
 [config.net]
 vlan = { start = 0x301, count = 2 }
